@@ -4,6 +4,75 @@ import api from "../services/api";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 
+// Every data point of every entry is its own live check.
+const RULES = {
+    name: [
+        { id: "filled", label: "Name entered", test: (v) => v.length > 0 },
+        { id: "len", label: "2 to 50 characters", test: (v) => v.length >= 2 && v.length <= 50 },
+        { id: "chars", label: "Only letters, spaces, . ' and -  (no numbers)", test: (v) => v.length > 0 && /^[a-zA-Z\s.'-]+$/.test(v) }
+    ],
+    email: [
+        { id: "local", label: "Has text before the @", test: (v) => /^[^\s@]+@/.test(v) },
+        { id: "at", label: "Contains one @ symbol", test: (v) => (v.match(/@/g) || []).length === 1 },
+        { id: "domain", label: "Has a domain after the @ (e.g. hospital)", test: (v) => /@[a-zA-Z0-9]/.test(v) },
+        { id: "tld", label: "Ends with a valid extension (e.g. .com)", test: (v) => /\.[a-zA-Z]{2,}$/.test(v) },
+        { id: "chars", label: "Uses only valid characters, no spaces", test: (v) => v.length > 0 && /^[a-zA-Z0-9._%+@-]+$/.test(v) }
+    ],
+    password: [
+        { id: "filled", label: "Password entered", test: (v) => v.length > 0 },
+        { id: "len", label: "At least 6 characters", test: (v) => v.length >= 6 }
+    ],
+    phone: [
+        { id: "filled", label: "Phone number entered", test: (v) => v.length > 0 },
+        { id: "len", label: "Exactly 10 digits", test: (v) => v.length === 10 }
+    ],
+    qualification: [
+        { id: "filled", label: "Qualification entered", test: (v) => v.length > 0 },
+        { id: "len", label: "At least 2 characters", test: (v) => v.length >= 2 }
+    ],
+    experience: [
+        { id: "filled", label: "Experience entered", test: (v) => v.length > 0 },
+        { id: "whole", label: "A whole number", test: (v) => /^\d+$/.test(v) },
+        { id: "range", label: "Between 1 and 60 years", test: (v) => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 60 }
+    ],
+    consultationFee: [
+        { id: "filled", label: "Fee entered", test: (v) => v.length > 0 },
+        { id: "min", label: "At least ₹100", test: (v) => v !== "" && !isNaN(Number(v)) && Number(v) >= 100 }
+    ]
+};
+
+const COMMON_FIELDS = ["name", "email", "password", "phone"];
+const DOCTOR_FIELDS = ["qualification", "experience", "consultationFee"];
+
+// Value each field is checked against (same trimming as on submit)
+const prep = (value) => String(value ?? "").trim();
+const runChecks = (name, value) => RULES[name].map((r) => ({ ...r, passed: r.test(prep(value)) }));
+
+// Live checklist under an input
+function Checklist({ checks, focused, visited }) {
+    return (
+        <ul style={{ listStyle: "none", margin: "8px 0 0", padding: 0, fontSize: "12px" }} aria-live="polite">
+            {checks.map((c) => {
+                let color = "#94a3b8"; // pending
+                let icon = "○";
+                if (c.passed) {
+                    color = "#16a34a";
+                    icon = "✓";
+                } else if (visited && !focused) {
+                    color = "#ef4444";
+                    icon = "✗";
+                }
+                return (
+                    <li key={c.id} style={{ color, marginBottom: "3px", display: "flex", gap: "6px" }}>
+                        <span style={{ width: "12px", textAlign: "center" }}>{icon}</span>
+                        <span>{c.label}</span>
+                    </li>
+                );
+            })}
+        </ul>
+    );
+}
+
 function Signup() {
     const [role, setRole] = useState("PATIENT");
     const [formData, setFormData] = useState({
@@ -25,77 +94,94 @@ function Signup() {
         workingHours: 8
     });
 
+    const [focused, setFocused] = useState("");
+    const [visited, setVisited] = useState({});
     const [errorMsg, setErrorMsg] = useState("");
     const [successMsg, setSuccessMsg] = useState("");
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
 
+    // Fields that apply to the selected role
+    const activeFields = role === "DOCTOR" ? [...COMMON_FIELDS, ...DOCTOR_FIELDS] : COMMON_FIELDS;
+
+    const checks = {};
+    activeFields.forEach((f) => {
+        checks[f] = runChecks(f, formData[f]);
+    });
+
+    const fieldValid = (f) => checks[f].every((c) => c.passed);
+    const allValid = activeFields.every(fieldValid);
+
     const handleChange = (e) => {
         const { name, value } = e.target;
+        setErrorMsg("");
         if (name === "phone") {
-            const numericValue = value.replace(/\D/g, "").slice(0, 10);
-            setFormData({
-                ...formData,
-                phone: numericValue
-            });
+            setFormData({ ...formData, phone: value.replace(/\D/g, "").slice(0, 10) });
             return;
         }
-        setFormData({
-            ...formData,
-            [name]: value
-        });
+        setFormData({ ...formData, [name]: value });
     };
+
+    const handleFocus = (e) => setFocused(e.target.name);
+    const handleBlur = (e) => {
+        const { name } = e.target;
+        setFocused("");
+        setVisited((prev) => ({ ...prev, [name]: true }));
+    };
+
+    const borderFor = (f) => {
+        const hasValue = prep(formData[f]).length > 0;
+        if (!hasValue && !visited[f]) return undefined;
+        if (fieldValid(f)) return "#16a34a";
+        return visited[f] && focused !== f ? "#ef4444" : undefined;
+    };
+
+    // Shows while focused, once typed in, or after the field was left / submit pressed
+    const renderChecklist = (f) => {
+        const show = focused === f || prep(formData[f]).length > 0 || visited[f];
+        if (!show) return null;
+        return <Checklist checks={checks[f]} focused={focused === f} visited={!!visited[f]} />;
+    };
+
+    // Props shared by every checked input
+    const inputProps = (f) => ({
+        name: f,
+        className: "form-input",
+        value: formData[f],
+        onChange: handleChange,
+        onFocus: handleFocus,
+        onBlur: handleBlur,
+        style: { borderColor: borderFor(f) }
+    });
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         setErrorMsg("");
         setSuccessMsg("");
 
-        const nameTrimmed = formData.name.trim();
-        const emailTrimmed = formData.email.trim();
-        const phoneTrimmed = formData.phone.trim();
-        const passwordTrimmed = formData.password.trim();
+        // Reveal the check result of every entry, then stop if any failed
+        const allVisited = {};
+        activeFields.forEach((f) => (allVisited[f] = true));
+        setVisited((prev) => ({ ...prev, ...allVisited }));
 
-        if (!nameTrimmed || !emailTrimmed || !passwordTrimmed || !phoneTrimmed) {
-            setErrorMsg("Please fill in all required fields (Name, Email, Password, and Phone).");
-            return;
-        }
-
-        const nameRegex = /^[a-zA-Z\s]{2,50}$/;
-        if (!nameRegex.test(nameTrimmed)) {
-            setErrorMsg("Invalid Name. Name must contain only letters and spaces (2 to 50 characters).");
-            return;
-        }
-
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(emailTrimmed)) {
-            setErrorMsg("Invalid Email address format.");
-            return;
-        }
-
-        if (passwordTrimmed.length < 6) {
-            setErrorMsg("Password must be at least 6 characters long.");
-            return;
-        }
-
-        if (phoneTrimmed.length !== 10) {
-            setErrorMsg("Phone number must be exactly 10 digits.");
+        if (!allValid) {
+            setErrorMsg("Please fix the highlighted checks below before registering.");
             return;
         }
 
         setLoading(true);
         try {
             const payload = {
-                name: nameTrimmed,
-                email: emailTrimmed,
-                password: passwordTrimmed,
-                phone: phoneTrimmed,
+                name: formData.name.trim(),
+                email: formData.email.trim(),
+                password: formData.password.trim(),
+                phone: formData.phone.trim(),
                 role: role
             };
 
             if (role === "DOCTOR") {
                 payload.specialization = formData.specialization;
-                payload.qualification = formData.qualification;
+                payload.qualification = formData.qualification.trim();
                 payload.experience = Number(formData.experience) || 10;
                 payload.consultationFee = Number(formData.consultationFee) || 1000;
                 payload.availability = formData.availability;
@@ -115,7 +201,7 @@ function Signup() {
             }, 1200);
         } catch (error) {
             setErrorMsg(
-                error.response?.data?.message || 
+                error.response?.data?.message ||
                 "Error creating account. Please check your details and try again."
             );
         } finally {
@@ -157,59 +243,57 @@ function Signup() {
                         </button>
                     </div>
 
-                    <form onSubmit={handleSubmit}>
+                    {/* noValidate stops the browser's own popup so our live checks are the only ones */}
+                    <form onSubmit={handleSubmit} noValidate>
                         {/* Common Account Fields */}
                         <div className="form-group">
-                            <label>Full Name *</label>
+                            <label htmlFor="name">Full Name *</label>
                             <input
+                                id="name"
                                 type="text"
-                                name="name"
-                                className="form-input"
                                 placeholder={role === "DOCTOR" ? "e.g. Dr. Bhavna Chaudhry" : "e.g. Rahul Sharma"}
-                                value={formData.name}
-                                onChange={handleChange}
-                                required
+                                autoComplete="name"
+                                {...inputProps("name")}
                             />
+                            {renderChecklist("name")}
                         </div>
 
                         <div className="form-group">
-                            <label>Email Address *</label>
+                            <label htmlFor="email">Email Address *</label>
                             <input
+                                id="email"
                                 type="email"
-                                name="email"
-                                className="form-input"
                                 placeholder="name@hospital.com"
-                                value={formData.email}
-                                onChange={handleChange}
-                                required
+                                autoComplete="email"
+                                {...inputProps("email")}
                             />
+                            {renderChecklist("email")}
                         </div>
 
                         <div className="form-group">
-                            <label>Password *</label>
+                            <label htmlFor="password">Password *</label>
                             <input
+                                id="password"
                                 type="password"
-                                name="password"
-                                className="form-input"
                                 placeholder="Enter password"
-                                value={formData.password}
-                                onChange={handleChange}
-                                required
+                                autoComplete="new-password"
+                                {...inputProps("password")}
                             />
+                            {renderChecklist("password")}
                         </div>
 
                         <div className="form-group">
-                            <label>Phone Number * (10 Digits)</label>
+                            <label htmlFor="phone">Phone Number * (10 Digits)</label>
                             <input
+                                id="phone"
                                 type="tel"
-                                name="phone"
-                                className="form-input"
                                 placeholder="e.g. 9876543210"
                                 maxLength="10"
-                                value={formData.phone}
-                                onChange={handleChange}
-                                required
+                                inputMode="numeric"
+                                autoComplete="tel"
+                                {...inputProps("phone")}
                             />
+                            {renderChecklist("phone")}
                         </div>
 
                         {/* DOCTOR SPECIFIC FIELDS */}
@@ -239,16 +323,14 @@ function Signup() {
                                 </div>
 
                                 <div className="form-group">
-                                    <label>Qualification *</label>
+                                    <label htmlFor="qualification">Qualification *</label>
                                     <input
+                                        id="qualification"
                                         type="text"
-                                        name="qualification"
-                                        className="form-input"
                                         placeholder="e.g. MBBS, MD, MS, DM"
-                                        value={formData.qualification}
-                                        onChange={handleChange}
-                                        required
+                                        {...inputProps("qualification")}
                                     />
+                                    {renderChecklist("qualification")}
                                 </div>
 
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
@@ -282,27 +364,25 @@ function Signup() {
 
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                                     <div className="form-group">
-                                        <label>Experience (Years)</label>
+                                        <label htmlFor="experience">Experience (Years)</label>
                                         <input
+                                            id="experience"
                                             type="number"
-                                            name="experience"
-                                            className="form-input"
                                             min="1"
-                                            value={formData.experience}
-                                            onChange={handleChange}
+                                            {...inputProps("experience")}
                                         />
+                                        {renderChecklist("experience")}
                                     </div>
                                     <div className="form-group">
-                                        <label>Consultation Fee (₹ INR)</label>
+                                        <label htmlFor="consultationFee">Consultation Fee (₹ INR)</label>
                                         <input
+                                            id="consultationFee"
                                             type="number"
-                                            name="consultationFee"
-                                            className="form-input"
                                             min="100"
                                             step="50"
-                                            value={formData.consultationFee}
-                                            onChange={handleChange}
+                                            {...inputProps("consultationFee")}
                                         />
+                                        {renderChecklist("consultationFee")}
                                     </div>
                                 </div>
                             </div>

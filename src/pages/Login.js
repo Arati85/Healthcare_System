@@ -5,56 +5,66 @@ import { setCurrentUser } from "../services/auth";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 
+// Every data point of every entry is its own live check.
+const RULES = {
+    email: [
+        { id: "local", label: "Has text before the @", test: (v) => /^[^\s@]+@/.test(v) },
+        { id: "at", label: "Contains one @ symbol", test: (v) => (v.match(/@/g) || []).length === 1 },
+        { id: "domain", label: "Has a domain after the @ (e.g. example)", test: (v) => /@[a-zA-Z0-9-]+(\.|$)/.test(v) && /@[a-zA-Z0-9]/.test(v) },
+        { id: "tld", label: "Ends with a valid extension (e.g. .com)", test: (v) => /\.[a-zA-Z]{2,}$/.test(v) },
+        { id: "chars", label: "Uses only valid characters, no spaces", test: (v) => v.length > 0 && /^[a-zA-Z0-9._%+@-]+$/.test(v) }
+    ],
+    password: [
+        { id: "filled", label: "Password entered", test: (v) => v.length > 0 },
+        { id: "len", label: "At least 6 characters", test: (v) => v.length >= 6 }
+    ]
+};
+
 const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
-// One check per field: returns an error message, or "" when the entry is valid
-const checkField = (name, value) => {
-    if (name === "email") {
-        const v = value.trim();
-        if (!v) return "Email address is required.";
-        if (!EMAIL_REGEX.test(v)) return "Please enter a valid email address (e.g. name@example.com).";
-        return "";
-    }
-    if (name === "password") {
-        if (!value) return "Password is required.";
-        if (value.length < 6) return "Password must be at least 6 characters long.";
-        return "";
-    }
-    return "";
-};
+// Value each field is checked against (email is trimmed, as on submit)
+const prep = (name, value) => (name === "email" ? value.trim() : value);
+
+const runChecks = (name, value) =>
+    RULES[name].map((r) => ({ ...r, passed: r.test(prep(name, value)) }));
 
 function Login() {
     const [values, setValues] = useState({ email: "", password: "" });
-    const [touched, setTouched] = useState({ email: false, password: false });
+    const [focused, setFocused] = useState("");
+    const [visited, setVisited] = useState({ email: false, password: false });
     const [errorMsg, setErrorMsg] = useState("");
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
 
-    // Live status of each entry, derived from its current value
-    const errors = {
-        email: checkField("email", values.email),
-        password: checkField("password", values.password)
+    const checks = {
+        email: runChecks("email", values.email),
+        password: runChecks("password", values.password)
+    };
+
+    const fieldValid = (name) => {
+        const allRules = checks[name].every((c) => c.passed);
+        return name === "email" ? allRules && EMAIL_REGEX.test(values.email.trim()) : allRules;
     };
 
     const handleChange = (e) => {
         const { name, value } = e.target;
         setValues((prev) => ({ ...prev, [name]: value }));
-        setTouched((prev) => ({ ...prev, [name]: true })); // check as the user types
         setErrorMsg("");
     };
 
+    const handleFocus = (e) => setFocused(e.target.name);
+
     const handleBlur = (e) => {
         const { name } = e.target;
-        setTouched((prev) => ({ ...prev, [name]: true }));
+        setFocused("");
+        setVisited((prev) => ({ ...prev, [name]: true }));
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         setErrorMsg("");
-
-        // Show the check result for every entry, then stop if any failed
-        setTouched({ email: true, password: true });
-        if (errors.email || errors.password) return;
+        setVisited({ email: true, password: true });
+        if (!fieldValid("email") || !fieldValid("password")) return;
 
         setLoading(true);
         try {
@@ -74,26 +84,39 @@ function Login() {
         }
     };
 
-    // Green ✓ when valid, red ⚠ + message when invalid, nothing until touched
-    const renderCheck = (name) => {
-        if (!touched[name]) return null;
-        if (errors[name]) {
-            return (
-                <span style={{ color: "#ef4444", fontSize: "12px", marginTop: "4px", display: "block" }}>
-                    ⚠️ {errors[name]}
-                </span>
-            );
-        }
+    // Live checklist: shows while typing/focused, and after leaving if anything is unmet
+    const renderChecklist = (name) => {
+        const hasValue = values[name].length > 0;
+        const show = focused === name || hasValue || visited[name];
+        if (!show) return null;
+
         return (
-            <span style={{ color: "#16a34a", fontSize: "12px", marginTop: "4px", display: "block" }}>
-                ✓ Looks good
-            </span>
+            <ul style={{ listStyle: "none", margin: "8px 0 0", padding: 0, fontSize: "12px" }} aria-live="polite">
+                {checks[name].map((c) => {
+                    let color = "#94a3b8"; // pending
+                    let icon = "○";
+                    if (c.passed) {
+                        color = "#16a34a";
+                        icon = "✓";
+                    } else if (visited[name] && focused !== name) {
+                        color = "#ef4444";
+                        icon = "✗";
+                    }
+                    return (
+                        <li key={c.id} style={{ color, marginBottom: "3px", display: "flex", gap: "6px" }}>
+                            <span style={{ width: "12px", textAlign: "center" }}>{icon}</span>
+                            <span>{c.label}</span>
+                        </li>
+                    );
+                })}
+            </ul>
         );
     };
 
     const borderFor = (name) => {
-        if (!touched[name]) return undefined;
-        return errors[name] ? "#ef4444" : "#16a34a";
+        if (!values[name] && !visited[name]) return undefined;
+        if (fieldValid(name)) return "#16a34a";
+        return visited[name] && focused !== name ? "#ef4444" : undefined;
     };
 
     return (
@@ -124,10 +147,12 @@ function Login() {
                                 placeholder="name@example.com"
                                 value={values.email}
                                 onChange={handleChange}
+                                onFocus={handleFocus}
                                 onBlur={handleBlur}
+                                autoComplete="email"
                                 style={{ borderColor: borderFor("email") }}
                             />
-                            {renderCheck("email")}
+                            {renderChecklist("email")}
                         </div>
 
                         <div className="form-group" style={{ marginBottom: "20px" }}>
@@ -140,10 +165,12 @@ function Login() {
                                 placeholder="Enter your password"
                                 value={values.password}
                                 onChange={handleChange}
+                                onFocus={handleFocus}
                                 onBlur={handleBlur}
+                                autoComplete="current-password"
                                 style={{ borderColor: borderFor("password") }}
                             />
-                            {renderCheck("password")}
+                            {renderChecklist("password")}
                         </div>
 
                         <button

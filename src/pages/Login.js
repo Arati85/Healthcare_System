@@ -1,4 +1,3 @@
-
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import api from "../services/api";
@@ -6,40 +5,95 @@ import { setCurrentUser } from "../services/auth";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
+// One check per field: returns an error message, or "" when the entry is valid
+const checkField = (name, value) => {
+    if (name === "email") {
+        const v = value.trim();
+        if (!v) return "Email address is required.";
+        if (!EMAIL_REGEX.test(v)) return "Please enter a valid email address (e.g. name@example.com).";
+        return "";
+    }
+    if (name === "password") {
+        if (!value) return "Password is required.";
+        if (value.length < 6) return "Password must be at least 6 characters long.";
+        return "";
+    }
+    return "";
+};
+
 function Login() {
-    const [email, setEmail] = useState("");
-    const [password, setPassword] = useState("");
+    const [values, setValues] = useState({ email: "", password: "" });
+    const [touched, setTouched] = useState({ email: false, password: false });
     const [errorMsg, setErrorMsg] = useState("");
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
+
+    // Live status of each entry, derived from its current value
+    const errors = {
+        email: checkField("email", values.email),
+        password: checkField("password", values.password)
+    };
+
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+        setValues((prev) => ({ ...prev, [name]: value }));
+        setTouched((prev) => ({ ...prev, [name]: true })); // check as the user types
+        setErrorMsg("");
+    };
+
+    const handleBlur = (e) => {
+        const { name } = e.target;
+        setTouched((prev) => ({ ...prev, [name]: true }));
+    };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         setErrorMsg("");
 
-        if (!email || !password) {
-            setErrorMsg("Please enter both email and password.");
-            return;
-        }
+        // Show the check result for every entry, then stop if any failed
+        setTouched({ email: true, password: true });
+        if (errors.email || errors.password) return;
 
         setLoading(true);
         try {
             const response = await api.post("/users/login", {
-                email: email.trim(),
-                password: password.trim()
+                email: values.email.trim(),
+                password: values.password.trim()
             });
-
-            const user = response.data;
-            setCurrentUser(user);
+            setCurrentUser(response.data);
             navigate("/dashboard");
         } catch (error) {
             setErrorMsg(
-                error.response?.data?.message || 
+                error.response?.data?.message ||
                 "Login failed. Please check email and password or ensure backend is running."
             );
         } finally {
             setLoading(false);
         }
+    };
+
+    // Green ✓ when valid, red ⚠ + message when invalid, nothing until touched
+    const renderCheck = (name) => {
+        if (!touched[name]) return null;
+        if (errors[name]) {
+            return (
+                <span style={{ color: "#ef4444", fontSize: "12px", marginTop: "4px", display: "block" }}>
+                    ⚠️ {errors[name]}
+                </span>
+            );
+        }
+        return (
+            <span style={{ color: "#16a34a", fontSize: "12px", marginTop: "4px", display: "block" }}>
+                ✓ Looks good
+            </span>
+        );
+    };
+
+    const borderFor = (name) => {
+        if (!touched[name]) return undefined;
+        return errors[name] ? "#ef4444" : "#16a34a";
     };
 
     return (
@@ -54,37 +108,50 @@ function Login() {
                     </p>
 
                     {errorMsg && (
-                        <div className="alert alert-danger">
+                        <div className="alert alert-danger" style={{ marginBottom: "16px" }}>
                             {errorMsg}
                         </div>
                     )}
 
-                    <form onSubmit={handleSubmit}>
-                        <div className="form-group">
-                            <label>Email Address</label>
+                    <form onSubmit={handleSubmit} noValidate>
+                        <div className="form-group" style={{ marginBottom: "16px" }}>
+                            <label htmlFor="email">Email Address</label>
                             <input
+                                id="email"
+                                name="email"
                                 type="email"
                                 className="form-input"
                                 placeholder="name@example.com"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                required
+                                value={values.email}
+                                onChange={handleChange}
+                                onBlur={handleBlur}
+                                style={{ borderColor: borderFor("email") }}
                             />
+                            {renderCheck("email")}
                         </div>
 
-                        <div className="form-group">
-                            <label>Password</label>
+                        <div className="form-group" style={{ marginBottom: "20px" }}>
+                            <label htmlFor="password">Password</label>
                             <input
+                                id="password"
+                                name="password"
                                 type="password"
                                 className="form-input"
                                 placeholder="Enter your password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                required
+                                value={values.password}
+                                onChange={handleChange}
+                                onBlur={handleBlur}
+                                style={{ borderColor: borderFor("password") }}
                             />
+                            {renderCheck("password")}
                         </div>
 
-                        <button type="submit" className="btn btn-primary" style={{ width: "100%", padding: "10px", marginTop: "4px" }} disabled={loading}>
+                        <button
+                            type="submit"
+                            className="btn btn-primary"
+                            style={{ width: "100%", padding: "10px", marginTop: "4px" }}
+                            disabled={loading}
+                        >
                             {loading ? "Signing in..." : "Login"}
                         </button>
                     </form>
